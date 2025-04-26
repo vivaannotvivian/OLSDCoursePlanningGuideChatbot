@@ -1,15 +1,28 @@
 import os
 import json
 import streamlit as st
+import sentence_transformers
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import FAISS
 from langchain.prompts import PromptTemplate
 from langchain.chains import RetrievalQA, LLMChain
 from langchain.chains.combine_documents.stuff import StuffDocumentsChain
-from langchain.llms import Ollama
-import fitz  # PyMuPDF
+from langchain_community.llms import Ollama
+from langchain_community.llms import openai
+import pymupdf
+
+def process_pdf(file):
+    docs = load_pdf(file)
+    chunks = chunk_documents(docs)
+    docs_json = json.dumps([{"page_content": d.page_content, "metadata": d.metadata} for d in chunks])
+    return create_retriever(docs_json)
+
+def get_llm():
+    return Ollama(model="deepseek-r1:1.5b")  # or another local model
+
+
 
 def load_pdf(file):
     with open("temp.pdf", "wb") as f:
@@ -102,4 +115,5 @@ def main():
                 st.write(response)
     else:
         st.info("📥 Please upload a PDF file to proceed.")
-
+if __name__ == "__main__":
+    main()
