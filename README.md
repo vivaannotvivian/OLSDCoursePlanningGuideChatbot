@@ -1,3 +1,4 @@
-Install Ollama 
+Install Ollama
+
 Run App:
 streamlit run appwithtxt.py
