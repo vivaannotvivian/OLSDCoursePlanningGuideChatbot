@@ -1,119 +1,45 @@
-import os
-import json
-import streamlit as st
-import sentence_transformers
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.document_loaders import TextLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter as rcts
 from langchain_community.vectorstores import FAISS
-from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.prompts import PromptTemplate
-from langchain.chains import RetrievalQA, LLMChain
-from langchain.chains.combine_documents.stuff import StuffDocumentsChain
-from langchain_community.llms import Ollama
-from langchain_community.llms import openai
-import pymupdf
-
-def process_pdf(file):
-    docs = load_pdf(file)
-    chunks = chunk_documents(docs)
-    docs_json = json.dumps([{"page_content": d.page_content, "metadata": d.metadata} for d in chunks])
-    return create_retriever(docs_json)
-
-def get_llm():
-    return Ollama(model="deepseek-r1:1.5b")  # or another local model
+from langchain_huggingface import HuggingFaceEmbeddings
+from transformers import pipeline
+from transformers import AutoTokenizer
+from langchain_community.llms import huggingface_pipeline
+from langchain.chains import retrieval_qa
+from transformers import AutoModelForCausalLM
 
 
+loader = TextLoader("guide.txt", encoding='utf-8')
+documents = loader.load()
+print("loaded text")
 
-def load_pdf(file):
-    with open("temp.pdf", "wb") as f:
-        f.write(file.getvalue())
-    loader = PyPDFLoader("temp.pdf")
-    return loader.load()
+text_splitter = rcts(
+    chunk_size=500,
+    chunk_overlap=50,
+)
 
-def get_pdf_first_page_image(file):
-    with open("temp.pdf", "wb") as f:
-        f.write(file.getvalue())
-    doc = pymupdf.open("temp.pdf")
-    os.makedirs("static", exist_ok=True)  # Ensure storage directory exists
-    pix = doc[0].get_pixmap()
-    image_path = "static/first_page.png"
-    pix.save(image_path)
-    return image_path
+docs = text_splitter.split_documents(documents)
+print("split text")
+embeddings = HuggingFaceEmbeddings(model_name ="sentence-transformers/all-MiniLM-L6-v2")
 
-def chunk_documents(docs):
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    return text_splitter.split_documents(docs)
+db = FAISS.from_documents(docs, embeddings)
+print("faissed the thing")
 
-def create_retriever(docs_json):
-    docs = json.loads(docs_json)
-    embedder = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    vector = FAISS.from_texts(
-        [doc["page_content"] for doc in docs],
-        embedder,
-        metadatas=[{"source": doc["metadata"].get("source", "Uploaded PDF")} for doc in docs]
-    )
-    return vector.as_retriever(search_type="similarity", search_kwargs={"k": 3})
+tokenizer = AutoTokenizer.from_pretrained("deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B")
+model = AutoModelForCausalLM.from_pretrained("deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B")
+print("got model and tokenizer")
 
-def build_prompt():
-    prompt = """
-    1. Use the following context to answer the question.
-    2. If you don't know the answer, say "I don't know."
-    3. Keep the answer concise (3-4 sentences).
-    
-    Context: {context}
-    
-    Question: {question}
-    
-    Helpful Answer:"""
-    return PromptTemplate.from_template(prompt)
+hf_pipline = pipeline("text2text-generation", model = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", max_new_tokens=500, temperature=0.7, do_sample=True)
 
-def build_qa_chain(retriever, llm):
-    prompt = build_prompt()
-    llm_chain = LLMChain(llm=llm, prompt=prompt, verbose=True)
-    document_prompt = PromptTemplate(
-        input_variables=["page_content", "source"],
-        template="Context:\ncontent:{page_content}\nsource:{source}",
-    )
-    combine_documents_chain = StuffDocumentsChain(
-        llm_chain=llm_chain,
-        document_variable_name="context",
-        document_prompt=document_prompt,
-    )
-    return RetrievalQA(
-        combine_documents_chain=combine_documents_chain,
-        retriever=retriever,
-        return_source_documents=True,
-    )
+llm = huggingface_pipeline(pipeline=hf_pipline)
+print("found llm")
+qa_chain = retrieval_qa.from_chain_type(
+    llm=llm,
+    retriever=db.as_retriever()
+)
+print("made qa chain")
+query = "What are all the math classes offered?"
 
-def main():
-    st.set_page_config(layout="wide")
-    st.title("🚀 Fast RAG-based QA with DeepSeek R1")
-    
-    with st.sidebar:
-        uploaded_file = st.file_uploader("Upload a PDF file", type="pdf")
-        
-        if uploaded_file:
-            try:
-                image_path = get_pdf_first_page_image(uploaded_file)
-                st.image(image_path, caption="First Page Preview", use_column_width=True)
-            except Exception as e:
-                st.error("Failed to load preview: " + str(e))
-    
-    if uploaded_file:
-        with st.spinner("🔄 Processing PDF..."):
-            retriever = process_pdf(uploaded_file)
-        
-        llm = get_llm()
-        qa_chain = build_qa_chain(retriever, llm)
-        
-        user_input = st.text_input("Enter your question:")
-        
-        if user_input:
-            with st.spinner("🤖 Generating response..."):
-                response = qa_chain.invoke({"query": user_input})["result"]
-                st.write("### 📜 Answer:")
-                st.write(response)
-    else:
-        st.info("📥 Please upload a PDF file to proceed.")
-if __name__ == "__main__":
-    main()
+answer = qa_chain.run(query)
+print("Answer: ", answer)
+
