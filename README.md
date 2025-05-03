@@ -1,4 +1,7 @@
 Install Ollama
 
 Run App:
-streamlit run appwithtxt.py
+run the py file
+open html
+
+borrowed some design code from: https://www.codewithfaraz.com/content/133/create-your-own-chatbot-with-html-css-and-javascript
