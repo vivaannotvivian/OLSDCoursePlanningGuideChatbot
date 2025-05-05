@@ -1,3 +1,4 @@
+i spent 23 hours on ts 😭 
 Install Ollama
 
 Run App:
